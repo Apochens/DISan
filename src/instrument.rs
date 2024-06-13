@@ -3,7 +3,7 @@ use tree_sitter::{Node, Parser};
 
 use crate::edit::{Edit, EditConstant, EditKind};
 use crate::matcher::{ConstructKind, DebugLocUpdateKind, FuncMatch};
-use crate::traverse::{get_children_of_kind, get_fn_identifier, get_parent_of_kind, get_var_name_from_assign, get_var_name_from_decl};
+use crate::traverse::{get_children_of_kind, get_fn_identifier, get_ident_from_call, get_parent_of_kind, get_var_name_from_assign, get_var_name_from_decl};
 use crate::ast::AstNode;
 
 pub struct Instrumenter {
@@ -197,7 +197,6 @@ impl<'tree> Instrumenter {
              *       )
              *  )
              */
-
             let debugloc_src = function.child_by_field_name("argument").unwrap();
             let debugloc_src_str = debugloc_src.to_source(code);
             let debugloc_dst = arguments.child(1).unwrap(); // Only one arg
@@ -227,34 +226,57 @@ impl<'tree> Instrumenter {
 
                 let debugloc_dst = function.child_by_field_name("argument").unwrap();
                 let debugloc = arguments.child(1).unwrap();
-                if debugloc.kind() == "call_expression" {  // DLD->setDebugLoc(DLS->getDebugLoc())
-                    // let debugloc_src = debugloc.child_by_field_name("function").unwrap().child_by_field_name("argument").unwrap();
-                    // debugloc_src.dump_source(code);
-                    
-                    let insert_str = format!("{{ ");
-                    self.add_insert(insert_str, call.start_byte());
-
-                    let insert_str = format!(
-                        " RC->trackDebugLocUpdate({}, nullptr, {}, {}, \"{}\", \"nullptr\"); }}",
-                        debugloc_dst.to_source(code),
-                        // debugloc_src.to_source(code),
-                        DebugLocUpdateKind::Preserving,
-                        call.start_position().row,
-                        debugloc_dst.to_source(code),
-                        // debugloc_src.to_source(code),
-                    );
-
-                    self.add_insert(insert_str, call.end_byte() + 1);
+                let debugloc_src = if debugloc.kind() == "call_expression" {
+                    get_ident_from_call(&debugloc, "getDebugLoc", code)
                 } else {
-                    panic!("Encounter dbeug location update using variable directly!");
-                }
+                    None
+                };
+
+                let insert_str = format!("{{ ");
+                self.add_insert(insert_str, call.start_byte());
+
+                let insert_str = format!(
+                    " RC->trackDebugLocPreserving({}, nullptr, {}, \"{}\", \"nullptr\"); }}",
+                    debugloc_dst.to_source(code),
+                    call.start_position().row,
+                    debugloc_dst.to_source(code),
+                );
+
+                self.add_insert(insert_str, call.end_byte() + 1);
 
             },
-            Some(DebugLocUpdateKind::Merging) => {
+            Some(DebugLocUpdateKind::Merging) => {                
+                let debugloc_dst = function.child_by_field_name("argument").unwrap();
+
+                let debugloc_1 = arguments.child(1).unwrap();
+                let debugloc_src_1 = if debugloc_1.kind() == "call_expression" {
+                    get_ident_from_call(&debugloc_1, "getDebugLoc", code)
+                } else {
+                    None
+                };
+
+                let debugloc_2 = arguments.child(3).unwrap();
+                let debugloc_src_2 = if debugloc_2.kind() == "call_expression" {
+                    get_ident_from_call(&debugloc_2, "getDebugLoc", code)
+                } else {
+                    None
+                };
+
 
             },
             Some(DebugLocUpdateKind::Dropping) => {
+                let debugloc_dst = function.child_by_field_name("argument").unwrap();
 
+                let insert_str = format!("{{ ");
+                self.add_insert(insert_str, call.start_byte());
+
+                let insert_str = format!(
+                    " RC->trackDebugLocDropping({}, {}, \"{}\"); }}",
+                    debugloc_dst.to_source(code),
+                    call.start_position().row,
+                    debugloc_dst.to_source(code),
+                );
+                self.add_insert(insert_str, call.end_byte() + 1);
             },
             None => {},
         };
@@ -283,13 +305,11 @@ impl<'tree> Instrumenter {
     /* BinaryOperator::CreateMul */
     fn handle_call_to_qualified_identifier(&mut self, call: &Node, code: &String) {
         assert_eq!(call.kind(), "call_expression");
-
+        
         let function = call.child_by_field_name("function").unwrap();
-        let arguments = call.child_by_field_name("arguments").unwrap();
-
         let fn_name_str = function.to_source(code);
         if let Some(ConstructKind::Creating) = fn_name_str.is_creation() {
-
+            
             if let Some(parent_decl) = get_parent_of_kind(&call, "declaration") {
                 let var_name = get_var_name_from_decl(&parent_decl);
                 let insert_str = format!(
@@ -313,12 +333,22 @@ impl<'tree> Instrumenter {
                 );
                 self.add_insert(insert_str, parent_assign.end_byte() + 1);
             }
+
+            if let Some(parent_return) = get_parent_of_kind(&call, "return_statement") {
+                let replace_str = format!(
+                    "{{ auto *V = {}; RC->trackDebugLocDst(V, nullptr, {}, {}, \"\", \"\"); return V; }}", 
+                    call.to_source(code),
+                    ConstructKind::Creating,
+                    call.start_position().row,
+                );
+
+                self.add_replace(replace_str, parent_return.start_byte(), parent_return.end_byte());
+            }
         }
     }
 
     fn handle_call_to_identifier(&mut self, call: &Node, code: &String) {
         assert_eq!(call.kind(), "call_expression");
-
     }
 
     fn collect_fn_body_edit(&mut self, fn_def: &Node, code: &String) {

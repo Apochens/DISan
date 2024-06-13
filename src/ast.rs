@@ -38,3 +38,11 @@ impl<'tree> AstNode for Node<'tree> {
         self.kind() == "using_declaration"
     }
 }
+
+pub enum ASTNodeKind {
+    Ident,
+    FieldExpr,
+    FieldIdent,
+    CallExpr,
+    ArgList,
+}

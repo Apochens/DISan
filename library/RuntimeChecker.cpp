@@ -33,7 +33,7 @@ UpdateKind DebugLocDstM::properUpdateKind() {
         // Only has replacement, but has no construction.
         return UpdateKind::Others;
 
-    if (ReplacedInstNum == 0) {
+    if (ReplacedInstNum == 0) { // Moving
         if (!InDomRegion)
             return UpdateKind::Dropping;
     }
@@ -66,8 +66,12 @@ bool RuntimeChecker::inDominantRegionOf(Instruction *DebugLocDst, Instruction *D
         || PDT.dominates(DebugLocSrc, DebugLocDst);
 }
 
-void RuntimeChecker::recordUpdate(unsigned SrcLine, UpdateKind Kind) {
+void RuntimeChecker::recordUpdate(Instruction *DebugLocDstInst, UpdateKind Kind) {
     unsigned KindID = static_cast<unsigned>(Kind);
+    DebugLocDstM *DLDM = InstToDLDMap[DebugLocDstInst];
+
+    unsigned SrcLine = DLDM->srcLine();
+
     if (SrcLineToUpdateMap.contains(SrcLine)) {
         SrcLineToUpdateMap[SrcLine].insert(KindID);
     } else {
@@ -77,11 +81,11 @@ void RuntimeChecker::recordUpdate(unsigned SrcLine, UpdateKind Kind) {
 
 void RuntimeChecker::reportUpdate() {
     for (auto [SrcLine, UpdateSet]: SrcLineToUpdateMap) {
-        logs() << SrcLine << ": ";
+        logs() << "[Checker] Fail! " << SrcLine << " (";
         for (unsigned Kind: UpdateSet) {
             logs() << ToString(static_cast<UpdateKind>(Kind)) << " ";
         }
-        logs() << "\n";
+        logs() << ")\n";
     }
 }
 
@@ -111,7 +115,7 @@ void RuntimeChecker::trackDebugLocDst(
             Instruction *MovePosInst = dyn_cast<Instruction>(InsertPos);
             assert(MovePosInst && "[TrackDebugLocDst] The destination of the move is not an instruction!");
             bool IsDominated = inDominantRegionOf(MovePosInst, DebugLocDstInst);
-            InstToDLDMap[DebugLocDstInst]->replaceAt(SrcLine, IsDominated);
+            InstToDLDMap[DebugLocDstInst]->insertAt(SrcLine, IsDominated);
             break;
         }
         default:
@@ -140,7 +144,7 @@ void RuntimeChecker::trackDebugLocDst(
             Instruction *MovePosInst = dyn_cast<Instruction>(&*InsertPos);
             assert(MovePosInst && "[TrackDebugLocDst] The destination of the move is not an instruction!");
             bool IsDominated = inDominantRegionOf(MovePosInst, DebugLocDstInst);
-            InstToDLDMap[DebugLocDstInst]->replaceAt(SrcLine, IsDominated);
+            InstToDLDMap[DebugLocDstInst]->insertAt(SrcLine, IsDominated);
             break;
         }
         default:
@@ -176,15 +180,46 @@ void RuntimeChecker::trackDebugLocSrc(
     }
 }
 
-void RuntimeChecker::trackDebugLocUpdate(
+void RuntimeChecker::trackDebugLocPreserving(
     Instruction *DebugLocDst,
     Instruction *DebugLocSrc,
-    UpdateKind Kind,
     unsigned SrcLine,
     std::string DLDName,
     std::string DLSName
 ) {
-    
+    if (DebugLocDstM *DLDM = InstToDLDMap[DebugLocDst]) {
+        DLDM->setInCodeUpdateKind(UpdateKind::Preserving);
+    } else {
+        assert(false && "Preserving debugloc of an untracked instruction");
+    }
+}
+
+void RuntimeChecker::trackDebugLocMerging(
+    Instruction *DebugLocDst,
+    Instruction *DebugLocSrc1,
+    Instruction *DebugLocSrc2,
+    unsigned SrcLine,
+    std::string DLDName,
+    std::string DLS1Name,
+    std::string DLS2Name
+) {
+    if (DebugLocDstM *DLDM = InstToDLDMap[DebugLocDst]) {
+        DLDM->setInCodeUpdateKind(UpdateKind::Merging);
+    } else {
+        assert(false && "Merging debugloc of an untracked instruction");
+    }
+}
+
+void RuntimeChecker::trackDebugLocDropping(
+    Instruction *DebugLocDst,
+    unsigned SrcLine,
+    std::string DLDName
+) {
+    if (DebugLocDstM *DLDM = InstToDLDMap[DebugLocDst]) {
+        DLDM->setInCodeUpdateKind(UpdateKind::Dropping);
+    } else {
+        assert(false && "Dropping debugloc of an untracked instruction");
+    }
 }
 
 void RuntimeChecker::trackInsertion(
@@ -239,23 +274,23 @@ void RuntimeChecker::startCheck() {
         UpdateKind InCodeKind = DLDM->inCodeUpdateKind();
 
         if (InCodeKind != UpdateKind::None && InCodeKind == ProperKind) {
-            dbgs() << "[Checker] \033[32mPass!\033[0m" << *DebugLocDst << " (\033[32m" << ToString(ProperKind) << "\033[0m)" << "\n";
-            logs() << "[Checker] Pass!" << *DebugLocDst << "(" << ToString(ProperKind) << ")\n";
+            dbgs() << "[Checker] \033[32mPass!\033[0m" << " (\033[32m" << ToString(ProperKind) << "\033[0m)" << "\n";
+            logs() << "[Checker] Pass! " << DLDM->srcLine() << " (" << ToString(ProperKind) << ")\n";
         } else {
             switch (ProperKind) {
                 case UpdateKind::Preserving: {
                     fail("Checker", "should preserve!");
-                    recordUpdate(DLDM->srcLine(), ProperKind);
+                    recordUpdate(DebugLocDst, ProperKind);
                     break;
                 }
                 case UpdateKind::Merging: {
                     fail("Checker", "should merge!");
-                    recordUpdate(DLDM->srcLine(), ProperKind);
+                    recordUpdate(DebugLocDst, ProperKind);
                     break;
                 }
                 case UpdateKind::Dropping: {
                     fail("Checker", "should drop!");
-                    recordUpdate(DLDM->srcLine(), ProperKind);
+                    recordUpdate(DebugLocDst, ProperKind);
                     break;
                 }
                 default:

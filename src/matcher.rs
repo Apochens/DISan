@@ -42,7 +42,7 @@ pub trait FuncMatch {
     fn is_insertion(&self) -> bool;
 }
 
-const CREATE_FUNC: [&str; 16] = [
+const CREATE_FUNC: [&str; 17] = [
     "BinaryOperator::CreateNeg",
     "BinaryOperator::CreateAdd",
     "BinaryOperator::CreateMul",
@@ -55,6 +55,8 @@ const CREATE_FUNC: [&str; 16] = [
     "BinaryOperator::CreateLShr",
     "BinaryOperator::CreateAnd",
     "BinaryOperator::Create",
+
+    "BranchInst::Create",
 
     "CastInst::CreateZExtOrBitCast",
     "CastInst::CreateBitOrPointerCast",

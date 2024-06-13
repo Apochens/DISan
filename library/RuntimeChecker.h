@@ -30,18 +30,26 @@ public:
           ReplacedInstNum(0),
           InCodeUpdateKind(UpdateKind::None) {}
     
+    std::string varName() const { return VarName; }
     ConstructKind constructKind() const { return CKind; }
-    unsigned srcLine() const { return ConstructSite; }
+    unsigned srcLine() const {
+        if (VarName == "" && ReplaceSite.size() != 0)
+            return *ReplaceSite.begin();
+        return ConstructSite; 
+    }
     unsigned replacedInstNum() const { return ReplacedInstNum; }
+    SmallDenseSet<unsigned, 2> replaceSite() const { return ReplaceSite; }
     Instruction *originalInst() const { return OriginalInst; }
     void setOriginalInst(Instruction *Inst) { OriginalInst = Inst; }
 
+    void setInCodeUpdateKind(UpdateKind Kind) { InCodeUpdateKind = Kind; }
     UpdateKind inCodeUpdateKind() const { return InCodeUpdateKind; }
     UpdateKind properUpdateKind();
 
     void insertAt(unsigned IS, bool InDR ) {
         InDomRegion = InDomRegion && InDR;
     }
+
     void replaceAt(unsigned RS, bool InDR) {
         ReplaceSite.insert(RS);
         InDomRegion = InDomRegion && InDR;
@@ -108,13 +116,28 @@ public:
         std::string DLSName
     );
 
-    void trackDebugLocUpdate(
+    void trackDebugLocPreserving(
         Instruction *DebugLocDst,
         Instruction *DebugLocSrc,
-        UpdateKind Kind,
         unsigned SrcLine,
         std::string DLDName,
         std::string DLSName
+    );
+
+    void trackDebugLocMerging(
+        Instruction *DebugLocDst,
+        Instruction *DebugLocSrc1,
+        Instruction *DebugLocSrc2,
+        unsigned SrcLine,
+        std::string DLDName,
+        std::string DLS1Name,
+        std::string DLS2Name
+    );
+
+    void trackDebugLocDropping(
+        Instruction *DebugLocDst,
+        unsigned SrcLine,
+        std::string DLDName
     );
 
     void trackInsertion(
@@ -156,7 +179,7 @@ private:
 
     bool inDominantRegionOf(Instruction *DebugLocDst, Instruction *DebugLocSrc);
 
-    void recordUpdate(unsigned SrcLine, UpdateKind Kind);
+    void recordUpdate(Instruction *DebugLocDstInst, UpdateKind Kind);
     void reportUpdate();
 };
 

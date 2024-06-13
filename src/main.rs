@@ -11,6 +11,8 @@ use colored::Colorize;
 use edit::EditConstant;
 use instrument::Instrumenter;
 
+const OUTPUT_DIR: &str = "./instrumented/";
+
 #[derive(Parser)]
 #[command(name = "DISan")]
 struct DISan {
@@ -19,12 +21,13 @@ struct DISan {
 
 fn check_code(buf: &str) -> bool {
     buf.contains(&EditConstant::header_include_str()) &&
-    buf.contains(&EditConstant::global_var_decl_str()) 
+    buf.contains(&EditConstant::global_var_decl_str()) &&
+    buf.contains("RC->startCheck();") &&
+    buf.contains("RC = new RuntimeChecker")
 }
 
 fn write_code(contents: &str, file_name: &str) {
-    let path = "./instrumented/".to_string() + file_name;
-    
+    let path = OUTPUT_DIR.to_string() + file_name;
     fs::write(path, contents).unwrap();
 }
 

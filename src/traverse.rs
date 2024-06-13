@@ -1,5 +1,7 @@
 use tree_sitter::Node;
 
+use crate::ast::AstNode;
+
 /// Top level collection
 pub fn get_children_of_kind<'tree>(node: &Node<'tree>, kind: &str) -> Vec<Node<'tree>> {
     let mut res = vec![];
@@ -52,8 +54,8 @@ pub fn get_var_name_from_assign<'tree>(assign: &Node<'tree>) -> Node<'tree> {
     }
 }
 
-pub fn get_fn_identifier<'tree>(fn_def: &Node<'tree>) -> Node<'tree> {
-    let declarator = fn_def.child_by_field_name("declarator").unwrap();
+pub fn get_fn_identifier<'tree>(fn_sig: &Node<'tree>) -> Node<'tree> {
+    let declarator = fn_sig.child_by_field_name("declarator").unwrap();
     let identifier = declarator.child_by_field_name("declarator").unwrap();
     let identifier = if identifier.kind() == "function_declarator" {
         identifier.child_by_field_name("declarator").unwrap()
@@ -61,4 +63,18 @@ pub fn get_fn_identifier<'tree>(fn_def: &Node<'tree>) -> Node<'tree> {
         identifier
     };
     identifier
+}
+
+pub fn get_ident_from_call<'tree>(fn_call: &Node<'tree>, fn_name_str: &str, code: &str) -> Option<Node<'tree>> {
+    assert_eq!(fn_call.kind(), "call_expression");
+
+    let function = fn_call.child_by_field_name("function").unwrap();
+    if function.kind() == "field_expression" {
+        let ident = function.child_by_field_name("argument").unwrap();
+        let fn_name = function.child_by_field_name("field").unwrap();
+        if fn_name.to_source(code) == fn_name_str {
+            return Some(ident);
+        }
+    }
+    None
 }
