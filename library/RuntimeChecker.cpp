@@ -33,9 +33,11 @@ UpdateKind DebugLocDstM::properUpdateKind() {
         // Only has replacement, but has no construction.
         return UpdateKind::Others;
 
-    if (ReplacedInstNum == 0) { // Moving
-        if (!InDomRegion)
+    if (ReplacedInstNum == 0) {
+        // When no instruction is replaced by the new instruction
+        if (!InDomRegion)   // Moving or Cloning
             return UpdateKind::Dropping;
+        return UpdateKind::Preserving;
     }
 
     if (ReplacedInstNum == 1) {
@@ -58,12 +60,12 @@ UpdateKind DebugLocDstM::properUpdateKind() {
 
 bool RuntimeChecker::inDominantRegionOf(Instruction *DebugLocDst, Instruction *DebugLocSrc) {
     // Renew (Post-)DominatorTree Analysis
-    DT.recalculate(*DebugLocDst->getFunction());
-    PDT.recalculate(*DebugLocDst->getFunction());
+    DT->recalculate(*DebugLocDst->getFunction());
+    PDT->recalculate(*DebugLocDst->getFunction());
 
     return DebugLocDst->getParent() == DebugLocSrc->getParent() 
-        || DT.dominates(DebugLocSrc, DebugLocDst) 
-        || PDT.dominates(DebugLocSrc, DebugLocDst);
+        || DT->dominates(DebugLocSrc, DebugLocDst) 
+        || PDT->dominates(DebugLocSrc, DebugLocDst);
 }
 
 void RuntimeChecker::recordUpdate(Instruction *DebugLocDstInst, UpdateKind Kind) {

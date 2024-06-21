@@ -5,6 +5,8 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
 
 using namespace llvm;
 
@@ -75,12 +77,12 @@ private:
 
 class RuntimeChecker {
 public:
-    RuntimeChecker(Function &F, FunctionAnalysisManager &FAM, StringRef PN)
-        : PassName(PN),
-          ModuleName(F.getParent()->getName()),
+    RuntimeChecker(Function &F, StringRef PN)
+        : PassName(PN), 
+          ModuleName(F.getParent()->getName()), 
           FunctionName(F.getName()),
-          DT(FAM.getResult<DominatorTreeAnalysis>(F)),
-          PDT(FAM.getResult<PostDominatorTreeAnalysis>(F))
+          DT(new DominatorTree(F)),
+          PDT(new PostDominatorTree(F))
     {
         StringRef DirName = "/data16/hshan/tmp/";
         sys::fs::create_directories(DirName);
@@ -89,6 +91,12 @@ public:
         Twine FileName = DirName + PassName;
         Logs = new raw_fd_ostream(FileName.str(), ErrorCode, sys::fs::OpenFlags::OF_Append);
     }
+
+    RuntimeChecker(Function &F, FunctionAnalysisManager &FAM, StringRef PN)
+        : RuntimeChecker(F, PN) {}
+
+    RuntimeChecker(Loop &L, LoopStandardAnalysisResults &AR, StringRef PN)
+        : RuntimeChecker(*L.getHeader()->getParent(), PN) {}
 
     void trackDebugLocDst(
         Value *DebugLocDst, 
@@ -162,13 +170,16 @@ public:
         delete Logs;
         for (auto [I, DLDM]: InstToDLDMap)
             delete DLDM;
+
+        delete DT;
+        delete PDT;
     }
 private:
     StringRef PassName;
     StringRef ModuleName;
     StringRef FunctionName;
-    DominatorTree &DT;
-    PostDominatorTree &PDT;
+    DominatorTree *DT;
+    PostDominatorTree *PDT;
 
     raw_fd_ostream *Logs;
 
