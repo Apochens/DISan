@@ -54,8 +54,9 @@ pub fn get_var_name_from_assign<'tree>(assign: &Node<'tree>) -> Node<'tree> {
     }
 }
 
-pub fn get_fn_identifier<'tree>(fn_sig: &Node<'tree>) -> Node<'tree> {
-    let declarator = fn_sig.child_by_field_name("declarator").unwrap();
+pub fn get_fn_identifier<'tree>(fn_def: &Node<'tree>) -> Node<'tree> {
+    // Only one function declarator in one function definition
+    let declarator = get_children_of_kind(fn_def, "function_declarator")[0];
     let identifier = declarator.child_by_field_name("declarator").unwrap();
     let identifier = if identifier.kind() == "function_declarator" {
         identifier.child_by_field_name("declarator").unwrap()
