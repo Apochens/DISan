@@ -7,6 +7,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
+#include "llvm/Analysis/LoopNestAnalysis.h"
 
 using namespace llvm;
 
@@ -22,57 +23,78 @@ enum class ConstructKind {
     Creating,
     Cloning,
     Moving,
-    None,
+    Untracked,
 };
 
 class DebugLocDstM {
 public:
-    DebugLocDstM(std::string VN, unsigned CS, ConstructKind CK)
-        : VarName(VN), ConstructSite(CS), CKind(CK), InDomRegion(true),
-          ReplacedInstNum(0),
-          InCodeUpdateKind(UpdateKind::None) {}
-    
-    std::string varName() const { return VarName; }
-    ConstructKind constructKind() const { return CKind; }
-    unsigned srcLine() const {
-        if (VarName == "" && ReplaceSite.size() != 0)
-            return *ReplaceSite.begin();
-        return ConstructSite; 
-    }
-    unsigned replacedInstNum() const { return ReplacedInstNum; }
-    SmallDenseSet<unsigned, 2> replaceSite() const { return ReplaceSite; }
-    Instruction *originalInst() const { return OriginalInst; }
-    void setOriginalInst(Instruction *Inst) { OriginalInst = Inst; }
+    DebugLocDstM(std::string VN, unsigned CS, ConstructKind CK, Instruction *Inst)
+        : VarName(VN),
+          TheInst(Inst),
+          ConstructSite(CS), CKind(CK),
 
-    void setInCodeUpdateKind(UpdateKind Kind) { InCodeUpdateKind = Kind; }
-    UpdateKind inCodeUpdateKind() const { return InCodeUpdateKind; }
+          InsertPosInOrigDomRegion(true),
+          InsertSite(0),
+
+          ReplacedInstNum(0),
+          InReplacedInstDomRegion(true),
+
+          InCodeUpdateKind(UpdateKind::None),
+          InCodeUpdateSite(0)
+    {}
+    
+    ConstructKind constructKind() const { return CKind; }
+    void setOriginalInst(Instruction *Inst) { OriginalInst = Inst; }
+    Instruction *originalInst() const { return OriginalInst; }
     UpdateKind properUpdateKind();
 
-    void insertAt(unsigned IS, bool InDR ) {
-        InDomRegion = InDomRegion && InDR;
+    void moveAt(unsigned MS, bool InDomRegion) {
+        // MoveSite is equal to ConstructSite, so we do not assign the site twice.
+
+        // Moreover, we regard the movement as a replacement, so an instruction
+        // constructed by movement replaces at least one instruction.
+        InReplacedInstDomRegion = InReplacedInstDomRegion && InDomRegion;
+        ReplacedInstNum++;
+    }
+
+    void insertAt(unsigned IS, bool InDomRegion) {
+        InsertPosInOrigDomRegion = InsertPosInOrigDomRegion && InDomRegion;
+        InsertSite = IS;
     }
 
     void replaceAt(unsigned RS, bool InDR) {
         ReplaceSite.insert(RS);
-        InDomRegion = InDomRegion && InDR;
+        InReplacedInstDomRegion = InReplacedInstDomRegion && InDR;
         ReplacedInstNum++;
     }
 
-    void updateAt() {
-
+    void updateAt(unsigned US, UpdateKind UK) {
+        InCodeUpdateKind = UK;
+        InCodeUpdateSite = US;
     }
+
+    std::string toString();
 private:
     std::string VarName;
+    Instruction *TheInst;
 
+    /* Construct track (Create, Clone, Move) */
     unsigned ConstructSite;
     ConstructKind CKind;
     Instruction *OriginalInst;
 
-    bool InDomRegion;
+    /* Insert track (for Clone) */
+    bool InsertPosInOrigDomRegion;
+    unsigned InsertSite;
+
+    /* Replace track */
     unsigned ReplacedInstNum;
+    bool InReplacedInstDomRegion;
     SmallDenseSet<unsigned, 2> ReplaceSite;
 
+    /* Update track */
     UpdateKind InCodeUpdateKind;
+    unsigned InCodeUpdateSite;
 };
 
 class RuntimeChecker {
@@ -92,28 +114,19 @@ public:
         Logs = new raw_fd_ostream(FileName.str(), ErrorCode, sys::fs::OpenFlags::OF_Append);
     }
 
-    RuntimeChecker(Function &F, FunctionAnalysisManager &FAM, StringRef PN)
-        : RuntimeChecker(F, PN) {}
-
-    RuntimeChecker(Loop &L, LoopStandardAnalysisResults &AR, StringRef PN)
+    RuntimeChecker(Loop &L, StringRef PN)
         : RuntimeChecker(*L.getHeader()->getParent(), PN) {}
+
+    RuntimeChecker(LoopNest &LN, StringRef PN)
+        : RuntimeChecker(*LN.getParent(), PN) {}
 
     void trackDebugLocDst(
         Value *DebugLocDst, 
-        Value *InsertPos,
+        Value *ExtraValue,
         ConstructKind Kind, 
         unsigned SrcLine, 
-        std::string DLDName,
-        std::string IPName
-    );
-
-    void trackDebugLocDst(
-        Value *DebugLocDst,
-        BasicBlock::iterator InsertPos,
-        ConstructKind Kind,
-        unsigned SrcLine,
-        std::string DLDName,
-        std::string IPName
+        std::string DLDName,    /* Obsoleted */
+        std::string IPName      /* Obsoleted */
     );
 
     void trackDebugLocSrc(
@@ -149,27 +162,21 @@ public:
     );
 
     void trackInsertion(
-        Value *DebugLocDst,
+        Value *InsertValue,
         Value *InsertPos,
         unsigned SrcLine,
-        std::string DLDName,
-        std::string DLSName
-    );
-
-    void trackInsertion(
-        Value *DebugLocDst,
-        BasicBlock::iterator InsertPos,
-        unsigned SrcLine,
-        std::string DLDName,
-        std::string DLSName
+        std::string DLDName = "",
+        std::string DLSName = ""
     );
 
     void startCheck();
 
     ~RuntimeChecker() {
         delete Logs;
-        for (auto [I, DLDM]: InstToDLDMap)
-            delete DLDM;
+        for (auto [_, DLDM]: InstToDLDMap) {
+            if (DLDM)
+                delete DLDM;
+        }
 
         delete DT;
         delete PDT;
@@ -180,18 +187,28 @@ private:
     StringRef FunctionName;
     DominatorTree *DT;
     PostDominatorTree *PDT;
+    DenseMap<Instruction *, DebugLocDstM *> InstToDLDMap;
 
     raw_fd_ostream *Logs;
 
-    DenseMap<Instruction *, DebugLocDstM *> InstToDLDMap;
-    DenseMap<unsigned, SmallDenseSet<unsigned, 2>> SrcLineToUpdateMap;
-
     raw_fd_ostream &logs() { return *Logs; }
 
+    /* Simple Queries */
     bool inDominantRegionOf(Instruction *DebugLocDst, Instruction *DebugLocSrc);
 
-    void recordUpdate(Instruction *DebugLocDstInst, UpdateKind Kind);
-    void reportUpdate();
+    /* Main functionality implementations */
+    void trackDebugLocDstImpl(
+        Instruction *DebugLocDstInst,
+        Value *ExtraValue,
+        ConstructKind Kind,
+        unsigned SrcLine
+    );
+    void trackDebugLocUpdateImpl();
+    void trackInsertionImpl(
+        Instruction *Inst,
+        Instruction *InsertPosInst,
+        unsigned SrcLine
+    );
 };
 
 #endif  // LLVM_TRANSFORM_UTILS_RUNTIME_DEBUGLOC_CHECKER_H

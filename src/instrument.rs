@@ -1,8 +1,9 @@
 use std::collections::HashSet;
+use colored::Colorize;
 use tree_sitter::{Node, Parser};
 
 use crate::edit::{Edit, EditKind};
-use crate::hook::{Hook, HookEnv};
+use crate::hook::Hook;
 use crate::matcher::{ConstructKind, DLUpdateKind, FuncMatch};
 use crate::traverse::{get_children_of_kind, get_fn_identifier, get_ident_from_call, get_parent_of_kind, get_var_name_from_assign, get_var_name_from_decl};
 use crate::ast::{ASTNodeKind, AstNode};
@@ -52,47 +53,32 @@ impl<'tree> Instrumenter {
             .child_by_field_name("declarator").unwrap()
             .child_by_field_name("parameters").unwrap();
         let params = get_children_of_kind(&param_list, "parameter_declaration");
-        assert!(params.len() >= 2, "The pass entry should have two parameters!"); 
+        assert!(params.len() >= 1, "The pass entry should have the target parameters!"); 
 
         let pass_target_type = params[0].child_by_field_name("type").unwrap();
         let pass_target_type_str = pass_target_type.to_source(code);
 
-        let params = match pass_target_type_str.as_str() {
+        let pass_target = match pass_target_type_str.as_str() {
             "Function" => {
-                let function_ptr = params[0].child_by_field_name("declarator").unwrap().child(1).unwrap();
-                let function_analysis_manager = params[1].child_by_field_name("declarator").unwrap();
-                if function_analysis_manager.child_count() == 1 {
-                    /* xxxPass::run(Function &F, FunctionAnalysisManager &); */
-                    self.add_insert("AM".to_string(), function_analysis_manager.end_byte());
-                    vec![function_ptr.to_source(code), "AM".to_string()]
-                } else {
-                    /* xxxPass::run(Function &F, FunctionAnalysisManager &AM); */
-                    vec![function_ptr.to_source(code), function_analysis_manager.child(1).unwrap().to_source(code)]
-                }
+                let function_ref = params[0].child_by_field_name("declarator").unwrap().child(1).unwrap();
+                function_ref.to_source(code)
             },
             "Loop" => {
-                let loop_ptr = params[0].child_by_field_name("declarator").unwrap().child(1).unwrap();
-                let loop_standard_analysis_results = params[2].child_by_field_name("declarator").unwrap();
-                if loop_standard_analysis_results.child_count() == 1 {
-                    self.add_insert("AM".to_string(), loop_standard_analysis_results.end_byte());
-                    vec![loop_ptr.to_source(code), "AR".to_string()]
-                } else {
-                    vec![loop_ptr.to_source(code), loop_standard_analysis_results.child(1).unwrap().to_source(code)]
-                }
+                let loop_ref = params[0].child_by_field_name("declarator").unwrap().child(1).unwrap();
+                loop_ref.to_source(code)
             },
-            _ => vec![],
+            "LoopNest" => {
+                let loop_nest_ref = params[0].child_by_field_name("declarator").unwrap().child(1).unwrap();
+                loop_nest_ref.to_source(code)
+            }
+            _ => unreachable!(),
         };
-
-        if params.is_empty() {
-            return ;
-        }
 
         /* Instrument */
         let fn_body = pass_entry.child_by_field_name("body").unwrap();
         let init_str = format!(
-            "RC = new RuntimeChecker({}, {}, \"{}\");\n  ",
-            params[0],
-            params[1],
+            "RC = new RuntimeChecker({}, \"{}\");\n  ",
+            pass_target,
             &self.instr_file_name
         );
         self.add_insert(init_str, fn_body.child(1).unwrap().start_byte());
@@ -105,7 +91,6 @@ impl<'tree> Instrumenter {
             self.add_insert(insert_str, return_stmt.end_byte());
         }
     }
-
 
     /// The main function to perform AST-level instrumentation
     pub fn instrument(&mut self, buf: &mut String) {
@@ -130,7 +115,7 @@ impl Instrumenter {
     fn visit_header_includes(&mut self, nodes: Vec<Node>) {
         assert_eq!(nodes.is_empty(), false, "No header includes in the code!");
         self.add_insert(
-            HookEnv::header_include_str(), 
+            Hook::header_include().to_string(), 
             nodes[0].start_byte()
         );
     }
@@ -138,9 +123,61 @@ impl Instrumenter {
     fn visit_using_decls(&mut self, nodes: Vec<Node>) {
         assert_eq!(nodes.is_empty(), false, "No using declaration in the code!");
         self.add_insert(
-            HookEnv::global_var_decl_str(), 
+            Hook::global_var_decl().to_string(), 
             nodes[0].end_byte() + 1
         );
+    }
+
+    fn try_visit_insertions(&mut self, call: Node, callee_name: &str, code: &str) {
+        assert_eq!(call.kind(), "call_expression");
+
+        let callee = call.child_by_field_name("function").unwrap();
+        let arguments = call.child_by_field_name("arguments").unwrap();
+        if callee.kind() != ASTNodeKind::FieldExpr.to_string() {
+            return ;
+        }
+
+        let inserted_inst = callee.child_by_field_name("argument").unwrap();
+        let insert_pos = match callee_name {
+            // 1 - void Instruction::insertBefore(BasicBlock::iterator InsertPos);
+            // 2 - void Instruction::insertBefore(BasicBlock &BB, InstListType::iterator InsertPos);
+            "insertBefore" => {
+                match arguments.child_count() {
+                    3 => { // 1
+                        let insert_it = arguments.child(1).unwrap();
+                        format!("*{}", insert_it.to_source(code))
+                    },
+                    5 => { // 2
+                        let insert_bb = arguments.child(3).unwrap();
+                        format!("&{}", insert_bb.to_source(code))
+                    },
+                    _ => unreachable!()
+                }
+            },
+            // void Instruction::insertAfter(Instruction *InsertPos);
+            "insertAfter" => {
+                arguments.child(1).unwrap().to_source(code)
+            },
+            // BasicBlock::iterator Instruction::insertInto(BasicBlock *ParentBB, BasicBlock::iterator It);
+            "insertInto" => {
+                arguments.child(1).unwrap().to_source(code)
+            },
+            _ => { return ; },
+        };
+
+        let insert_str = format!(
+            "{{ RC->trackInsertion({}, {}, {}, \"{}\", \"{}\"); ",
+            inserted_inst.to_source(code),
+            insert_pos,
+            call.row(),
+            inserted_inst.to_source(code),
+            insert_pos,
+        );
+        self.add_insert(insert_str, call.start_byte());
+
+        let insert_str = format!(" }}");
+        self.add_insert(insert_str, call.end_byte() + 1);
+
     }
 
     fn visit_fn_calls(&mut self, nodes: Vec<Node>, code: &str) {
@@ -166,7 +203,7 @@ impl Instrumenter {
                             " RC->trackDebugLocDst({}, nullptr, {}, {}, \"{}\", \"\");",
                             var_name.to_source(code),
                             ConstructKind::Creating,
-                            parent_decl.start_position().row,
+                            parent_decl.row(),
                             var_name.to_source(code),
                         );
                         self.add_insert(insert_str, parent_decl.end_byte());
@@ -183,7 +220,7 @@ impl Instrumenter {
                             " RC->trackDebugLocDst({}, nullptr, {}, {}, \"{}\", \"\"); }}",
                             var_name.to_source(code),
                             ConstructKind::Creating,
-                            parent_assign.start_position().row,
+                            parent_assign.row(),
                             var_name.to_source(code),
                         );
                         self.add_insert(insert_str, parent_assign.end_byte() + 1);
@@ -195,61 +232,85 @@ impl Instrumenter {
                             "{{ auto *V = {}; RC->trackDebugLocDst(V, nullptr, {}, {}, \"\", \"\"); return V; }}", 
                             call.to_source(code),
                             ConstructKind::Creating,
-                            call.start_position().row,
+                            call.row(),
                         );
         
                         self.add_replace(replace_str, parent_return.start_byte(), parent_return.end_byte());
                         continue;
                     }
+                    
+                    if let Some(parent) = call.parent() {
+                        if parent.kind() == "expression_statement" {
+                            let replace_str = format!(
+                                "Instruction *I = {}; RC->trackDebugLocDst(I, nullptr, {}, {}, \"\", \"\")",
+                                call.to_source(code),
+                                ConstructKind::Creating,
+                                call.row(),
+                            );
+                            self.add_replace(replace_str, call.start_byte(), call.end_byte());
+                        }
+                    }
+
                 },
                 /* auto *NI = OI->clone(); */
                 Some(ConstructKind::Cloning) => {
                     let original_inst = callee.child_by_field_name("argument").unwrap();
+                    let addr_op = if callee.child(1).unwrap().to_source(code).as_str() == "->" { "" } else { "&" };
                     if let Some(parent_decl) = get_parent_of_kind(&call, "declaration") {
                         let var_name = get_var_name_from_decl(&parent_decl);
+
                         let insert_str = format!(
-                            " RC->trackDebugLocDst({}, {}, {}, {}, \"{}\", \"{}\");",
+                            " RC->trackDebugLocDst({}, {}{}, {}, {}, \"{}\", \"{}\");",
                             var_name.to_source(&code),
+                            addr_op,
                             original_inst.to_source(code),
                             ConstructKind::Cloning,
-                            parent_decl.start_position().row,
+                            parent_decl.row(),
                             var_name.to_source(&code),
                             original_inst.to_source(code),
                         );
-
                         self.add_insert(insert_str, parent_decl.end_byte());
+
                         continue;
                     }
 
                     if let Some(parent_assign) = get_parent_of_kind(&call, "assignment_expression") {
                         let var_name = get_var_name_from_assign(&parent_assign);
+
+                        let insert_str = format!("{{ ");
+                        self.add_insert(insert_str, parent_assign.start_byte());
+
                         let insert_str = format!(
-                            " RC->trackDebugLocDst({}, {}, {}, {}, \"{}\", \"{}\");",
+                            " RC->trackDebugLocDst({}, {}{}, {}, {}, \"{}\", \"{}\"); }}",
                             var_name.to_source(code),
+                            addr_op,
                             original_inst.to_source(code),
                             ConstructKind::Cloning,
-                            parent_assign.start_position().row,
+                            parent_assign.row(),
                             var_name.to_source(code),
                             original_inst.to_source(code),
                         );
-
                         self.add_insert(insert_str, parent_assign.end_byte() + 1);
+
                         continue;
                     }
 
+                    call.dump_source(code);
                     panic!("Failed to parse instruction clone!");
                 },
                 /* I->moveBefore(D, ..); */
                 Some(ConstructKind::Moving) => {
                     let debugloc_dst = callee.child_by_field_name("argument").unwrap();
+                    let addr_op = if callee.child(1).unwrap().to_source(code).as_str() == "->" { "" } else { "&" };
                     if arguments.child_count() == 3 {
                         let move_dst = arguments.child(1).unwrap();
                         let insert_str = format!(
-                            "{{ RC->trackDebugLocDst({}, {}, {}, {}, \"{}\", \"{}\"); ",
+                            "{{ RC->trackDebugLocDst({}{}, {}, {}, {}, \"{}\", \"{}\"); ",
+                            addr_op,
                             debugloc_dst.to_source(&code),  // DivInst
                             move_dst.to_source(&code),   // PreBB->getTerminater()
                             ConstructKind::Moving,
-                            call.start_position().row,
+                            call.row(),
                             debugloc_dst.to_source(&code),
                             move_dst.to_source(&code),
                         );
@@ -260,11 +321,12 @@ impl Instrumenter {
                     } else if arguments.child_count() == 5 {
                         let move_dst_iter = arguments.child(3).unwrap();
                         let insert_str = format!(
-                            "{{ RC->trackDebugLocDst({}, {}, {}, {}, \"{}\", \"{}\"); ", 
+                            "{{ RC->trackDebugLocDst({}{}, {}, {}, {}, \"{}\", \"{}\"); ", 
+                            addr_op,
                             debugloc_dst.to_source(code),
                             move_dst_iter.to_source(code),
                             ConstructKind::Moving,
-                            call.start_position().row,
+                            call.row(),
                             debugloc_dst.to_source(code),
                             move_dst_iter.to_source(code),
                         );
@@ -294,26 +356,24 @@ impl Instrumenter {
                     let debugloc_src = callee.child_by_field_name("argument").unwrap();
                     let debugloc_src_str = debugloc_src.to_source(code);
                     let debugloc_dst = arguments.child(1).unwrap(); // Only one arg
-                    let debugloc_dst_str = debugloc_dst.to_source(code).split("\n").map(|s| s.trim()).collect::<Vec<&str>>().join(" ");
+                    let debugloc_dst_str = debugloc_dst.to_source(code);
                     
                     // We need to distinguish between `Value &` (DLS.replace) and `Value *` (DLS->replace)
                     let field_operator = callee.child(1).unwrap().to_source(code);
                     let prepare_str = format!(
-                        "Value {}DebugLocSrc = {}; Value *DebugLocDst = {};",
-                        if field_operator.as_str() == "." { "&" } else {"*"},
+                        "Value *DebugLocSrc = {}{}; Value *DebugLocDst = {};",
+                        if field_operator.as_str() == "." { "&" } else { "" },
                         debugloc_src_str,
                         debugloc_dst_str,
                     );
 
                     let replace_str = format!(
-                        "DebugLocSrc{}replaceAllUsesWith(DebugLocDst);", 
-                        &field_operator
+                        "DebugLocSrc->replaceAllUsesWith(DebugLocDst);",
                     );
 
                     let hook_str = format!(
-                        "RC->trackDebugLocSrc(DebugLocDst, {}DebugLocSrc, {}, \"{}\", \"{}\");", 
-                        if field_operator.as_str() == "." { "&" } else { "" },
-                        call.start_position().row,
+                        "RC->trackDebugLocSrc(DebugLocDst, DebugLocSrc, {}, \"{}\", \"{}\");", 
+                        call.row(),
                         debugloc_dst_str,
                         debugloc_src_str,
                     );
@@ -323,10 +383,39 @@ impl Instrumenter {
                 },
                 /* I->replaceUsesOfWith(OldI, NewI); */
                 "replaceUsesOfWith" => {
+                    if call.parent().unwrap().kind() != "expression_statement" {
+                        panic!("{}", "Non expression statement parent!".red().bold());
+                    }
+                    
+                    let called_obj = callee.child_by_field_name("argument").unwrap();
+                    let old_inst = arguments.child(1).unwrap();
+                    let new_inst = arguments.child(3).unwrap();
 
+                    let field_operator = callee.child(1).unwrap().to_source(code);
+                    let prepare_str = format!(
+                        "Value *DebugLocSrc = {}; Value *DebugLocDst = {};",
+                        old_inst.to_source(code),
+                        new_inst.to_source(code),
+                    );
+
+                    let inst_repl_str = format!(
+                        "{}{}replaceUsesOfWith(DebugLocSrc, DebugLocDst);",
+                        called_obj.to_source(code),
+                        field_operator,
+                    );
+
+                    let hook_str = format!(
+                        "RC->trackDebugLocSrc(DebugLocDst, DebugLocSrc, {}, \"{}\", \"{}\");",
+                        call.row(),
+                        old_inst.to_source(code),
+                        new_inst.to_source(code),
+                    );
+
+                    let replace_str = format!("{{ {} {} {} }}", prepare_str, inst_repl_str, hook_str);
+                    self.add_replace(replace_str, call.start_byte(), call.end_byte() + 1);
                 },
                 _ => {},
-            }
+            };
 
             match callee_name.is_debugloc_update() {
                 Some(DLUpdateKind::Preserving) => {
@@ -344,7 +433,7 @@ impl Instrumenter {
                     let insert_str = format!(
                         " RC->trackDebugLocPreserving({}, nullptr, {}, \"{}\", \"nullptr\"); }}",
                         debugloc_dst.to_source(code),
-                        call.start_position().row,
+                        call.row(),
                         debugloc_dst.to_source(code),
                     );
 
@@ -366,17 +455,26 @@ impl Instrumenter {
                     } else {
                         None
                     };
+
+                    let insert_str = format!(
+                        " RC->trackDebugLocMerging({}, nullptr, nullptr, {}, \"\", \"\", \"\");",
+                        debugloc_dst.to_source(code),
+                        debugloc_dst.row(),
+                    );
+                    self.add_insert(insert_str, call.end_byte() + 1);
                 },
                 Some(DLUpdateKind::Dropping) => {
                     let debugloc_dst = callee.child_by_field_name("argument").unwrap();
+                    let addr_op = if callee.child(1).unwrap().to_source(code).as_str() == "->" { "" } else { "&" };
 
                     let insert_str = format!("{{ ");
                     self.add_insert(insert_str, call.start_byte());
 
                     let insert_str = format!(
-                        " RC->trackDebugLocDropping({}, {}, \"{}\"); }}",
+                        " RC->trackDebugLocDropping({}{}, {}, \"{}\"); }}",
+                        addr_op,
                         debugloc_dst.to_source(code),
-                        call.start_position().row,
+                        call.row(),
                         debugloc_dst.to_source(code),
                     );
                     self.add_insert(insert_str, call.end_byte() + 1);
@@ -384,26 +482,7 @@ impl Instrumenter {
                 None => {},
             };
 
-            if callee_name.is_insertion() {
-                let debugloc_dst = callee.child_by_field_name("argument").unwrap();
-                if arguments.child_count() == 3 {
-                    let inst_insert_pos = arguments.child(1).unwrap();
-    
-                    let insert_str = format!(
-                        "{{ RC->trackInsertion({}, {}, {}, \"{}\", \"{}\"); ",
-                        debugloc_dst.to_source(code),
-                        inst_insert_pos.to_source(code),
-                        call.start_position().row,
-                        debugloc_dst.to_source(code),
-                        inst_insert_pos.to_source(code),
-                    );
-                    self.add_insert(insert_str, call.start_byte());
-    
-                    let insert_str = format!(" }}");
-                    self.add_insert(insert_str, call.end_byte() + 1);
-                }
-            }
-
+            self.try_visit_insertions(call, &callee_name, code);
         }
     }
 
@@ -418,7 +497,7 @@ impl Instrumenter {
                         " RC->trackDebugLocDst({}, nullptr, {}, {}, \"{}\", \"\");", 
                         var_name.to_source(code),
                         ConstructKind::Creating,
-                        new.start_position().row,
+                        new.row(),
                         var_name.to_source(code),
                     );
 
@@ -436,7 +515,7 @@ impl Instrumenter {
                         " RC->trackDebugLocDst({}, nullptr, {}, {}, \"{}\", \"\"); }}",
                         var_name.to_source(code),
                         ConstructKind::Creating,
-                        new.start_position().row,
+                        new.row(),
                         var_name.to_source(code),
                     );
                     
@@ -445,17 +524,47 @@ impl Instrumenter {
                 }
 
                 if let Some(parent_return) = get_parent_of_kind(&new, "return_statement") {
-                    parent_return.dump_source(code);
-                    unreachable!();
+                    let insert_str = format!(
+                        "{{ Value *V = {}; RC->trackDebugLocDst(V, nullptr, {}, {}, \"\", \"\"); ",
+                        new.to_source(code),
+                        ConstructKind::Creating,
+                        new.row(),
+                    );
+                    self.add_insert(insert_str, parent_return.start_byte());
+
+                    let replace_str = format!("V");
+                    self.add_replace(replace_str, new.start_byte(), new.end_byte());
+
+                    let insert_str = format!(" }}");
+                    self.add_insert(insert_str, parent_return.end_byte());
+                    continue;
                 }
 
-                unreachable!();
+                println!(
+                    "{}{} {}:\n\t{} {}",
+                    "warning".yellow().bold(),
+                    ": Encounter an unsupported new expression at line".bold(),
+                    new.row(),
+                    "->".blue().bold(),
+                    new.to_source(code),
+                );
             }
         }
     }
 
     fn visit_fn_defs(&mut self, nodes: Vec<Node>, code: &str) {
         for fn_def in nodes {
+            if get_children_of_kind(&fn_def, "function_declarator").len() == 0 {
+                println!(
+                    "{}{} {}:\n\t{} {}", 
+                    "warning".yellow().bold(), 
+                    ": Encounter an function definition without declarator at line".bold(),
+                    fn_def.row(),
+                    "->".blue().bold(),
+                    fn_def.to_source(code)
+                );
+                continue;
+            }
             let fn_ident = get_fn_identifier(&fn_def);
             if fn_ident.to_source(code).is_pass_entry() {
                 /* Add initialization and clean up */
