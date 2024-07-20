@@ -30,7 +30,7 @@ def print_progress(elapse: float, total: float, count: int):
     filled_length = int(length * elapse // total)
     percent = ("{0:.2f}").format(100 * (elapse / total))
     bar = "█" * filled_length + '-' * (length - filled_length)
-    print(f"\r Progress: |{bar}| {percent}% (total: {total}s; executed: {count})", end="")
+    print(f"\r Progress: |{bar}| {percent}% (L: {total}s; E: {count}; T: {int(count / elapse)}/s)", end="")
 
 
 def start_fuzz(time_limit: int, single_pass: str | None, opt_level: int):
@@ -43,12 +43,39 @@ def start_fuzz(time_limit: int, single_pass: str | None, opt_level: int):
         subprocess.run(f"csmith > {SOURCE_CODE}", capture_output=True, shell=True)
 
         if single_pass != None:
+            # Executing one single pass
             print(f"Fuzzing single pass: {single_pass}")
-            subprocess.run([CLANG_PATH, SOURCE_CODE, "-Wno-everything", "-I/root/csmith/include", "-S", "-emit-llvm", "-o",  IR_PROGRAM])
-            subprocess.run([OPT_PATH, "-S", f"-passes=mem2reg,{single_pass}", IR_PROGRAM, "--disable-output"])
-        else:
-            subprocess.run([CLANG_PATH, SOURCE_CODE, "-Wno-everything", "-I/root/csmith/include", f"-O{opt_level}", "-o", EXECUTABLE])
 
+            if subprocess.run([CLANG_PATH, SOURCE_CODE, 
+                "-Wno-everything", 
+                "-I/root/csmith/include", 
+                "-S", "-emit-llvm", 
+                "-o",  IR_PROGRAM
+            ]).returncode != 0:
+                print("\n clang terminated with error.")
+                exit(-1)
+
+            if subprocess.run([OPT_PATH, 
+                "-S", f"-passes=mem2reg,{single_pass}", 
+                IR_PROGRAM, 
+                "--disable-output"
+            ]).returncode != 0:
+                print("\n opt terminated with error.")
+                exit(-1)
+        else:
+            # Executing the optimization pipeline -Ox
+            if subprocess.run([
+                CLANG_PATH,
+                SOURCE_CODE, 
+                "-Wno-everything", 
+                "-I/root/csmith/include", 
+                f"-O{opt_level}", 
+                "-o", EXECUTABLE
+            ]).returncode != 0:
+                print("\n clang terminated with error.")
+                exit(-1)
+
+        fuzz_count += 1
         print_progress(now_time - start_time, time_limit, fuzz_count)
         now_time = time.time()
 
