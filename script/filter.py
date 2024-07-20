@@ -3,32 +3,34 @@ import sys
 import re
 from typing import Set, Dict
 
-PASS_PATTERN = r"\[Checker\] Pass! (\d+) \((.*)\)"
-FAIL_PATTERN = r"\[Checker\] Fail! (\d+) \((.*)\)"
+CONSTRUCT = r"Construct: (\d+)"
+
+def is_pass(s: str) -> bool:
+    return s.startswith("pass: ")
+
+def is_fail(s: str) -> bool:
+    return s.startswith("fail: ")
+
+def is_warn(s: str) -> bool:
+    return s.startswith("warn: ")
+
+def key_construct(s: str) -> int:
+    if match := re.search(CONSTRUCT, s):
+        return  int(match[1])
+    raise RuntimeError
 
 if __name__ == "__main__":
     log_file_path = Path(sys.argv[1])
+
     if log_file_path.exists():
         content = log_file_path.read_text()
+        line_set: Set[str] = set(content.splitlines())
+        
+        for line in sorted(filter(is_pass, line_set)):
+            print(f"[\033[32;1mpass\033[0m]", line.removeprefix("pass: "))
 
-        pass_map = {}
-        fail_map: Dict[int, Set[str]] = {}
+        for line in sorted(filter(is_warn, line_set)):
+            print(f"[\033[33;1mwarn\033[0m]", line.removeprefix("warn: "))
 
-        for line in content.splitlines():
-
-            if matches := re.match(PASS_PATTERN, line):
-                src_line = int(str(matches[1]))
-                pass_map[src_line] = str(matches[2])
-
-            if matches := re.match(FAIL_PATTERN, line):
-                src_line = int(str(matches[1]))
-                if src_line in fail_map:
-                    fail_map[src_line].add(str(matches[2]))
-                else:
-                    fail_map[src_line] = { str(matches[2]) }
-                
-        for src_line in sorted(pass_map.keys()):
-            print(f"\033[32;1mPassed\033[0m: {src_line} ({pass_map[src_line]})")
-
-        for src_line in sorted(fail_map.keys()):
-            print(f"\033[31;1mFailed\033[0m: \033[1m{src_line} {fail_map[src_line]}\033[0m")
+        for line in sorted(filter(is_fail, line_set), key=key_construct):
+            print(f"[\033[31;1mfail\033[0m]", line.removeprefix("fail: "))
