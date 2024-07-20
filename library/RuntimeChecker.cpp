@@ -3,6 +3,8 @@
 #include <sstream>
 #include <iostream>
 
+// #define DEBUG
+
 //===----------------------------------------------------------------------===//
 //                          Utils
 //===----------------------------------------------------------------------===//
@@ -97,7 +99,9 @@ UpdateKind DebugLocDstM::properUpdateKind() {
         }
         case ConstructKind::Untracked: { 
             // Handle untracked instructions involved in instruction replacements.
+#ifdef DEBUG
             dbgs() << YELLOW << "warn: " << "an untracked instruction involved in a replacement!\n" << RESET;
+#endif
             return UpdateKind::Others;
         }
     }
@@ -111,7 +115,10 @@ std::string DebugLocDstM::toString() {
     if (InCodeUpdateKind != UpdateKind::None && InCodeUpdateKind == ProperKind) {
         ss << "pass: ";
     } else {
-        ss << "fail: "; 
+        if (ProperKind == UpdateKind::Others)
+            ss << "warn: ";
+        else
+            ss << "fail: ";
     }
 
     ss << UKindToString(ProperKind).str();
@@ -171,7 +178,9 @@ void RuntimeChecker::trackDebugLocDstImpl(
     if (ExtraValue) {
         if (BasicBlock *BB = dyn_cast<BasicBlock>(ExtraValue)) {
             DummyInst = PHINode::Create(DebugLocDstInst->getType(), 0, "", BB);
+#ifdef DEBUG
             dbgs() << "Create dummy: " << *DummyInst << "\n";
+#endif
             ExtraValue = DummyInst;
         }
     }
@@ -198,7 +207,9 @@ void RuntimeChecker::trackDebugLocDstImpl(
     }
 
     if (DummyInst) {
+#ifdef DEBUG
         dbgs() << "Destory dummy: " << *DummyInst << '\n';
+#endif
         DummyInst->removeFromParent();
     }
 }
@@ -212,7 +223,9 @@ void RuntimeChecker::trackDebugLocDst(
         std::string IPName
 ) {
     if (dyn_cast<BasicBlock>(DebugLocDst)) return ;
+#ifdef DEBUG
     dbgs() << "[TrackDebugLocDst] \033[31;1m" << SrcLine << ":\033[0m " << *DebugLocDst << "\n";
+#endif
 
     Instruction *DebugLocDstInst = dyn_cast<Instruction>(DebugLocDst);
 
@@ -258,9 +271,11 @@ void RuntimeChecker::trackDebugLocSrc(
     bool IsDominated = inDominantRegionOf(DebugLocDstInst, DebugLocSrcInst);
     std::string DomStr = IsDominated ? "Dom" : "Not dom";
     
+#ifdef DEBUG
     dbgs() << BLUE << "replace at " << SrcLine << " (" << DomStr << "):" << RESET << "\n\t" 
         << *DebugLocDstInst << " (" << DebugLocDstInst->getParent()->getName() << ")\n\t"
         << *DebugLocSrcInst << " (" << DebugLocSrcInst->getParent()->getName() << ")\n";
+#endif
 
     if (InstToDLDMap.contains(DebugLocDstInst)) {
         InstToDLDMap[DebugLocDstInst]->replaceAt(SrcLine, IsDominated);
@@ -284,7 +299,9 @@ void RuntimeChecker::trackDebugLocPreserving(
     if (InstToDLDMap.contains(DebugLocDst)) {
         InstToDLDMap[DebugLocDst]->updateAt(SrcLine, UpdateKind::Preserving);
     } else {
+#ifdef DEBUG
         dbgs() << YELLOW << "[TrackPres] Preserving debugloc of an untracked instruction at " << SrcLine << RESET << "\n";
+#endif
         // assert(false && "Preserving debugloc of an untracked instruction");
     }
 }
@@ -301,7 +318,9 @@ void RuntimeChecker::trackDebugLocMerging(
     if (InstToDLDMap.contains(DebugLocDst)) {
         InstToDLDMap[DebugLocDst]->updateAt(SrcLine, UpdateKind::Merging);
     } else {
+#ifdef DEBUG
         dbgs() << YELLOW << "[TrackPres] Merging debugloc of an untracked instruction at " << SrcLine << RESET << "\n";
+#endif
         // assert(false && "Merging debugloc of an untracked instruction");
     }
 }
@@ -314,7 +333,9 @@ void RuntimeChecker::trackDebugLocDropping(
     if (InstToDLDMap.contains(DebugLocDst)) {
         InstToDLDMap[DebugLocDst]->updateAt(SrcLine, UpdateKind::Dropping);
     } else {
+#ifdef DEBUG
         dbgs() << YELLOW << "[TrackPres] Dropping debugloc of an untracked instruction at " << SrcLine << RESET << "\n";
+#endif
         // assert(false && "Dropping debugloc of an untracked instruction");
     }
 }
@@ -328,8 +349,10 @@ void RuntimeChecker::trackInsertionImpl(
     Instruction *InsertPosInst,
     unsigned SrcLine
 ) {
+#ifdef DEBUG
     dbgs() << BLUE << "insertion at " << SrcLine << RESET 
            << "\n\t" << *InsertInst << "\n\t" << *InsertPosInst << "\n";
+#endif
 
     if (InstToDLDMap.contains(InsertInst)) {
         if (InstToDLDMap[InsertInst]->constructKind() == ConstructKind::Cloning) {
@@ -357,11 +380,8 @@ void RuntimeChecker::trackInsertion(
     Instruction *DummyInst = nullptr;
     if (!InsertPosInst) {
         if (BasicBlock *BB = dyn_cast<BasicBlock>(InsertPos)) {
-            dbgs() << "1\n";
             DummyInst = PHINode::Create(InsertInst->getType(), 0, "", BB);
             InsertPosInst = DummyInst;
-                        dbgs() << "2\n";
-
         }
     }
 
