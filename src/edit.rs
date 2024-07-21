@@ -27,15 +27,3 @@ impl Edit {
         }
     }
 }
-
-pub struct EditConstant;
-
-impl EditConstant {
-    pub fn header_include_str() -> String {
-        "#include \"llvm/Transforms/Utils/RuntimeDLChecker.h\"\n".to_string()
-    }
-
-    pub fn global_var_decl_str() -> String {
-        "namespace { RuntimeChecker *RC = nullptr; }\n".to_string()
-    }
-}

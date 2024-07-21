@@ -3,12 +3,13 @@ mod matcher;
 mod traverse;
 mod ast;
 mod edit;
+mod hook;
 
-use std::{fs, path::{Path, PathBuf}, process::exit};
+use std::{fs, path::{Path, PathBuf}};
 use clap::Parser;
 
 use colored::Colorize;
-use edit::EditConstant;
+use hook::Hook;
 use instrument::Instrumenter;
 
 const OUTPUT_DIR: &str = "./instrumented/";
@@ -19,11 +20,30 @@ struct DISan {
     target: String,
 }
 
-fn check_code(buf: &str) -> bool {
-    buf.contains(&EditConstant::header_include_str()) &&
-    buf.contains(&EditConstant::global_var_decl_str()) &&
-    buf.contains("RC->startCheck();") &&
-    buf.contains("RC = new RuntimeChecker")
+fn check_code(buf: &str, report: bool) -> bool {
+    let mut check_pass = true;
+
+    check_pass = check_pass && buf.contains(&Hook::header_include());
+    if !check_pass && report {
+        println!("{}", "No instrument header!".red().bold());
+    }
+
+    check_pass = check_pass && buf.contains(&Hook::global_var_decl());
+    if !check_pass && report {
+        println!("{}", "No instrument global variable!".red().bold());
+    }
+    
+    check_pass = check_pass && buf.contains("RC->startCheck();");
+    if !check_pass && report {
+        println!("{}", "No check run!".red().bold());
+    }
+
+    check_pass = check_pass && buf.contains("RC = new RuntimeChecker");
+    if !check_pass && report {
+        println!("{}", "No global variable init!".red().bold());
+    }
+
+    check_pass
 }
 
 fn write_code(contents: &str, file_name: &str) {
@@ -35,18 +55,21 @@ fn instrument_code(path: &PathBuf) {
     let absolute_path = path.canonicalize().unwrap();
     let mut code = fs::read_to_string(&path).unwrap();
     let file_name = path.file_name().unwrap().to_str().unwrap().to_string();
+    let file_str = absolute_path.to_str().unwrap();
+
+    if check_code(&code, false) {
+        println!("{} ({})", "The file has already been instrumented!".red().bold(), &file_str);
+        return ;
+    }
 
     let mut instrumenter = Instrumenter::new(file_name.to_owned());
     instrumenter.instrument(&mut code);
 
-    let file_str = absolute_path.to_str().unwrap();
-    if check_code(&code) {
+    if check_code(&code, true) {
         write_code(&code, &file_name);
         println!("{} ({})", "Finished the instrumentation!".green().bold(), &file_str);
-        return ;
     } else {
         eprintln!("{} ({})", "Failed the instrumentation check!".red().bold(), &file_str);
-        exit(-1);
     }
 }
 

@@ -145,7 +145,7 @@ impl Instrumenter {
                 match arguments.child_count() {
                     3 => { // 1
                         let insert_it = arguments.child(1).unwrap();
-                        format!("*{}", insert_it.to_source(code))
+                        format!("&*{}", insert_it.to_source(code))
                     },
                     5 => { // 2
                         let insert_bb = arguments.child(3).unwrap();
@@ -165,8 +165,11 @@ impl Instrumenter {
             _ => { return ; },
         };
 
+        let field_op = callee.child(1).unwrap().to_source(code);
+
         let insert_str = format!(
-            "{{ RC->trackInsertion({}, {}, {}, \"{}\", \"{}\"); ",
+            "{{ RC->trackInsertion({}{}, {}, {}, \"{}\", \"{}\"); ",
+            if field_op.as_str() == "." { "&" } else { "" },
             inserted_inst.to_source(code),
             insert_pos,
             call.row(),
@@ -301,40 +304,31 @@ impl Instrumenter {
                 /* I->moveBefore(D, ..); */
                 Some(ConstructKind::Moving) => {
                     let debugloc_dst = callee.child_by_field_name("argument").unwrap();
-                    let addr_op = if callee.child(1).unwrap().to_source(code).as_str() == "->" { "" } else { "&" };
-                    if arguments.child_count() == 3 {
-                        let move_dst = arguments.child(1).unwrap();
-                        let insert_str = format!(
-                            "{{ RC->trackDebugLocDst({}{}, {}, {}, {}, \"{}\", \"{}\"); ",
-                            addr_op,
-                            debugloc_dst.to_source(&code),  // DivInst
-                            move_dst.to_source(&code),   // PreBB->getTerminater()
-                            ConstructKind::Moving,
-                            call.row(),
-                            debugloc_dst.to_source(&code),
-                            move_dst.to_source(&code),
-                        );
-                        self.add_insert(insert_str, call.start_byte());
-                        let insert_str = format!(" }}");
-                        self.add_insert(insert_str, call.end_byte() + 1);
-                        continue;
-                    } else if arguments.child_count() == 5 {
-                        let move_dst_iter = arguments.child(3).unwrap();
-                        let insert_str = format!(
-                            "{{ RC->trackDebugLocDst({}{}, {}, {}, {}, \"{}\", \"{}\"); ", 
-                            addr_op,
-                            debugloc_dst.to_source(code),
-                            move_dst_iter.to_source(code),
-                            ConstructKind::Moving,
-                            call.row(),
-                            debugloc_dst.to_source(code),
-                            move_dst_iter.to_source(code),
-                        );
-                        self.add_insert(insert_str, call.start_byte());
-                        let insert_str = format!(" }}");
-                        self.add_insert(insert_str, call.end_byte() + 1);    
-                        continue;                
-                    }
+                    let move_dst = match arguments.child_count() {
+                        3 => {
+                            arguments.child(1).unwrap().to_source(code)
+                        },
+                        5 => {
+                            format!("&{}", arguments.child(1).unwrap().to_source(code))
+                        },
+                        _ => unreachable!()
+                    };
+                    let field_op = callee.child(1).unwrap().to_source(code);
+                    let ref_op = if field_op.as_str() == "->" { "" } else { "&" };
+
+                    let insert_str = format!(
+                        "{{ RC->trackDebugLocDst({}{}, {}, {}, {}, \"{}\", \"{}\"); ",
+                        ref_op, debugloc_dst.to_source(code),
+                        move_dst,
+                        ConstructKind::Moving,
+                        call.row(),
+                        debugloc_dst.to_source(code),
+                        move_dst,
+                    );
+                    self.add_insert(insert_str, call.start_byte());
+
+                    let insert_str = format!(" }}");
+                    self.add_insert(insert_str, call.end_byte() + 1);
                 },
                 None => {},
             };
