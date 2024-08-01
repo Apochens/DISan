@@ -1,4 +1,4 @@
-#include "llvm/Transforms/Utils/RuntimeDLChecker.h"
+#include "llvm/Transforms/Utils/RuntimeChecker.h"
 #include "llvm/IR/Instructions.h"
 #include <sstream>
 #include <iostream>
