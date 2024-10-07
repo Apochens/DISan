@@ -1,12 +1,15 @@
-mod instrument;
-mod matcher;
-mod traverse;
 mod ast;
 mod edit;
 mod hook;
+mod instrument;
+mod matcher;
+mod traverse;
 
-use std::{fs, path::{Path, PathBuf}};
 use clap::Parser;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use colored::Colorize;
 use hook::Hook;
@@ -32,7 +35,7 @@ fn check_code(buf: &str, report: bool) -> bool {
     if !check_pass && report {
         println!("{}", "No instrument global variable!".red().bold());
     }
-    
+
     check_pass = check_pass && buf.contains("RC->startCheck();");
     if !check_pass && report {
         println!("{}", "No check run!".red().bold());
@@ -58,8 +61,12 @@ fn instrument_code(path: &PathBuf) {
     let file_str = absolute_path.to_str().unwrap();
 
     if check_code(&code, false) {
-        println!("{} ({})", "The file has already been instrumented!".red().bold(), &file_str);
-        return ;
+        println!(
+            "{} ({})",
+            "The file has already been instrumented!".red().bold(),
+            &file_str
+        );
+        return;
     }
 
     let mut instrumenter = Instrumenter::new(file_name.to_owned());
@@ -67,9 +74,17 @@ fn instrument_code(path: &PathBuf) {
 
     if check_code(&code, true) {
         write_code(&code, &file_name);
-        println!("{} ({})", "Finished the instrumentation!".green().bold(), &file_str);
+        println!(
+            "{} ({})",
+            "Finished the instrumentation!".green().bold(),
+            &file_str
+        );
     } else {
-        eprintln!("{} ({})", "Failed the instrumentation check!".red().bold(), &file_str);
+        eprintln!(
+            "{} ({})",
+            "Failed the instrumentation check!".red().bold(),
+            &file_str
+        );
     }
 }
 
@@ -78,7 +93,7 @@ fn main() {
     let path = Path::new(&disan.target);
     if !path.exists() {
         eprintln!("{} does not exist!", &disan.target);
-        return ;
+        return;
     }
 
     let mut work_list: Vec<PathBuf> = vec![];
@@ -100,7 +115,7 @@ fn main() {
 
     if work_list.is_empty() {
         println!("No file to instrument. Exit.");
-        return ;
+        return;
     }
 
     let output_dir = Path::new("./instrumented/");

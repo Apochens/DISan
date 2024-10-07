@@ -1,5 +1,5 @@
-use tree_sitter::Node;
 use colored::Colorize;
+use tree_sitter::Node;
 
 pub trait AstNode {
     fn row(&self) -> usize;
@@ -24,7 +24,10 @@ impl<'tree> AstNode for Node<'tree> {
     }
 
     fn to_source(&self, code: &str) -> String {
-        let source: Vec<&str> = (&code[self.start_byte()..self.end_byte()]).split("\n").map(|s| s.trim()).collect();
+        let source: Vec<&str> = (&code[self.start_byte()..self.end_byte()])
+            .split("\n")
+            .map(|s| s.trim())
+            .collect();
         source.join(" ")
     }
 
@@ -33,7 +36,8 @@ impl<'tree> AstNode for Node<'tree> {
     }
 
     fn dump_source(&self, code: &str) {
-        println!("{} ({}): {}",
+        println!(
+            "{} ({}): {}",
             self.start_position().row.to_string().red().bold(),
             self.kind().green().bold(),
             self.to_raw(code),
@@ -238,8 +242,6 @@ impl Into<&str> for ASTNodeKind {
 //             }
 //         }
 
-
-        
 //         None
 //     }
 // }

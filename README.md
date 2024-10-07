@@ -13,7 +13,7 @@ Debug Information Sanitizer (DISan) is the sanitizer-like tool perfoming AST-lev
         : PassName(PN), 
           ...
     {
-->      StringRef DirName = "/patt/stub/";
+->      StringRef DirName = "/path/stub/";
         ...
     }
 ```

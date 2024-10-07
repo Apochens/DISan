@@ -9,11 +9,15 @@ pub enum DLUpdateKind {
 
 impl Display for DLUpdateKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            DLUpdateKind::Preserving => "UpdateKind::Preserving",
-            DLUpdateKind::Merging => "UpdateKind::Merging",
-            DLUpdateKind::Dropping => "UpdateKind::Dropping",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                DLUpdateKind::Preserving => "UpdateKind::Preserving",
+                DLUpdateKind::Merging => "UpdateKind::Merging",
+                DLUpdateKind::Dropping => "UpdateKind::Dropping",
+            }
+        )
     }
 }
 
@@ -26,11 +30,15 @@ pub enum ConstructKind {
 
 impl Display for ConstructKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            ConstructKind::Creating => "ConstructKind::Creating",
-            ConstructKind::Moving => "ConstructKind::Moving",
-            ConstructKind::Cloning => "ConstructKind::Cloning",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                ConstructKind::Creating => "ConstructKind::Creating",
+                ConstructKind::Moving => "ConstructKind::Moving",
+                ConstructKind::Cloning => "ConstructKind::Cloning",
+            }
+        )
     }
 }
 
@@ -43,30 +51,30 @@ pub trait FuncMatch {
 }
 
 const CREATE_FUNC: [&str; 37] = [
-    "BinaryOperator::Create",       /* BinaryOperator */
-    "BranchInst::Create",           /* BranchInst */
-    "CallBase::Create",             /* CallBase */
+    "BinaryOperator::Create", /* BinaryOperator */
+    "BranchInst::Create",     /* BranchInst */
+    "CallBase::Create",       /* CallBase */
     "CallBase::addOperandBundle",
     "CallBase::removeOperandBundle",
-    "CallBrInst::Create",               /* CallBrInst */
-    "CallInst::Create",                 /* CallInst */
-    "CmpInst::Create",              /* CmpInst */
-    "FCmpInst",                         /* FCmpInst */
-    "ICmpInst",                         /* ICmpInst */
-    "ExtractElementInst::Create",   /* ExtractElementInst */
-    "GetElementPtrInst::Create",    /* GetElementPtrInst */
-    "InsertElementInst::Create",    /* InsertElementInst */
-    "InsertValueInst::Create",      /* InsertValueInst */
-    "PHINode::Create",              /* PHINode */
-    "ReturnInst::Create",           /* ReturnInst */
-    "SelectInst::Create",           /* SelectInst */
-    "StoreInst",                    /* StoreInst */
-    "SwitchInst::Create",           /* SwitchInst */
+    "CallBrInst::Create",         /* CallBrInst */
+    "CallInst::Create",           /* CallInst */
+    "CmpInst::Create",            /* CmpInst */
+    "FCmpInst",                   /* FCmpInst */
+    "ICmpInst",                   /* ICmpInst */
+    "ExtractElementInst::Create", /* ExtractElementInst */
+    "GetElementPtrInst::Create",  /* GetElementPtrInst */
+    "InsertElementInst::Create",  /* InsertElementInst */
+    "InsertValueInst::Create",    /* InsertValueInst */
+    "PHINode::Create",            /* PHINode */
+    "ReturnInst::Create",         /* ReturnInst */
+    "SelectInst::Create",         /* SelectInst */
+    "StoreInst",                  /* StoreInst */
+    "SwitchInst::Create",         /* SwitchInst */
     "UnaryOperator::Create",
     "LoadInst",
     "FreezeInst",
     "ExtractValueInst::Create",
-    "CastInst::Create",             /* CastInst */
+    "CastInst::Create", /* CastInst */
     "AddrSpaceCastInst",
     "BitCastInst",
     "FPExtInst",
@@ -80,23 +88,13 @@ const CREATE_FUNC: [&str; 37] = [
     "TruncInst",
     "UIToFPInst",
     "ZExtInst",
-]; 
-
-const CLONE_FUNC: [&str; 1] = [
-    "clone"
 ];
 
-const MOVE_FUNC: [&str; 3] = [
-    "moveBefore",
-    "moveBeforePreserving",
-    "moveAfter",
-];
+const CLONE_FUNC: [&str; 1] = ["clone"];
 
-const INSERT_FUNC: [&str; 3] = [
-    "insertBefore",
-    "insertAfter",
-    "insertInto",
-];
+const MOVE_FUNC: [&str; 3] = ["moveBefore", "moveBeforePreserving", "moveAfter"];
+
+const INSERT_FUNC: [&str; 3] = ["insertBefore", "insertAfter", "insertInto"];
 
 impl FuncMatch for String {
     fn is_construct(&self) -> Option<ConstructKind> {
@@ -110,7 +108,6 @@ impl FuncMatch for String {
                     return Some(ConstructKind::Creating);
                 }
             }
-            
         }
         if CLONE_FUNC.contains(&self.as_str()) {
             return Some(ConstructKind::Cloning);

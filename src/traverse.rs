@@ -66,7 +66,11 @@ pub fn get_fn_identifier<'tree>(fn_def: &Node<'tree>) -> Node<'tree> {
     identifier
 }
 
-pub fn get_ident_from_call<'tree>(fn_call: &Node<'tree>, fn_name_str: &str, code: &str) -> Option<Node<'tree>> {
+pub fn get_ident_from_call<'tree>(
+    fn_call: &Node<'tree>,
+    fn_name_str: &str,
+    code: &str,
+) -> Option<Node<'tree>> {
     assert_eq!(fn_call.kind(), "call_expression");
 
     let function = fn_call.child_by_field_name("function").unwrap();
